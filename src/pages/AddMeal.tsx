@@ -25,7 +25,7 @@ export default function AddMeal() {
   const defaultType = (params.get('type') as MealType) ?? 'lunch'
   const today = format(new Date(), 'yyyy-MM-dd')
 
-  const { foods } = useFoods()
+  const { foods, addCustomFood } = useFoods()
   const { addMeal } = useDailyMeals(today)
 
   const [mealType, setMealType] = useState<MealType>(defaultType)
@@ -300,7 +300,7 @@ export default function AddMeal() {
 
       {/* Food search modal */}
       <Modal open={foodModal} onClose={() => setFoodModal(false)} title="搜尋食物">
-        <FoodSearchModal foods={foods} onSelect={addItem} />
+        <FoodSearchModal foods={foods} onSelect={addItem} onAddCustom={addCustomFood} />
       </Modal>
 
       {/* Oil modal */}
@@ -362,19 +362,21 @@ function ItemRow({ item, onDelete, onGramsChange }: {
   )
 }
 
-function FoodSearchModal({ foods, onSelect }: {
+function FoodSearchModal({ foods, onSelect, onAddCustom }: {
   foods: Food[]
   onSelect: (food: Food, serving: ServingSize) => void
+  onAddCustom: (food: Omit<Food, 'id'>) => Promise<number>
 }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<string | null>(null)
   const [selectedFood, setSelectedFood] = useState<Food | null>(null)
+  const [showAddForm, setShowAddForm] = useState(false)
 
   const results = useCallback(() => {
     let list = foods
     if (category) list = list.filter(f => f.category === category)
     if (query.trim()) list = searchFoods(query, list)
-    else list = list.slice(0, 30)
+    else list = list.slice(0, 50)
     return list
   }, [foods, query, category])
 
@@ -384,6 +386,20 @@ function FoodSearchModal({ foods, onSelect }: {
         food={selectedFood}
         onSelect={serving => onSelect(selectedFood, serving)}
         onBack={() => setSelectedFood(null)}
+      />
+    )
+  }
+
+  if (showAddForm) {
+    return (
+      <AddCustomFoodForm
+        initialName={query}
+        onSave={async (food) => {
+          const id = await onAddCustom(food)
+          const newFood: Food = { ...food, id }
+          onSelect(newFood, food.servingSizes[0])
+        }}
+        onBack={() => setShowAddForm(false)}
       />
     )
   }
@@ -427,13 +443,127 @@ function FoodSearchModal({ foods, onSelect }: {
             <ChevronDown size={16} className="text-[#e8e0d4] -rotate-90" />
           </button>
         ))}
-        {results().length === 0 && (
-          <div className="text-center py-8 text-[#8a8a8a] text-sm">
-            找不到「{query}」<br />
-            <button className="text-[#4caf7d] mt-2 text-sm">手動輸入食物</button>
-          </div>
-        )}
+        <button
+          className="w-full mt-3 py-3 rounded-2xl border border-dashed border-[#4caf7d] text-[#4caf7d] text-sm flex items-center justify-center gap-1 touch-manipulation active:bg-[#e8f5ed]"
+          onClick={() => setShowAddForm(true)}
+        >
+          <Plus size={15} /> 找不到？自己新增食物
+        </button>
       </div>
+    </div>
+  )
+}
+
+function AddCustomFoodForm({ initialName, onSave, onBack }: {
+  initialName: string
+  onSave: (food: Omit<Food, 'id'>) => Promise<void>
+  onBack: () => void
+}) {
+  const [name, setName] = useState(initialName)
+  const [category, setCategory] = useState('其他')
+  const [calories, setCalories] = useState('')
+  const [protein, setProtein] = useState('')
+  const [carb, setCarb] = useState('')
+  const [fat, setFat] = useState('')
+  const [servingG, setServingG] = useState('100')
+  const [servingLabel, setServingLabel] = useState('一份')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const allCategories = [...FOOD_CATEGORIES, '其他']
+
+  async function handleSave() {
+    if (!name.trim()) { setErr('請輸入食物名稱'); return }
+    if (!calories || +calories < 0) { setErr('請輸入每100g熱量'); return }
+    setSaving(true)
+    try {
+      const food: Omit<Food, 'id'> = {
+        name: name.trim(),
+        category,
+        per100gCalories: +calories,
+        per100gProtein: +protein || 0,
+        per100gCarb: +carb || 0,
+        per100gFat: +fat || 0,
+        per100gSugar: 0, per100gFiber: 0, per100gSodium: 0,
+        servingSizes: [
+          { label: servingLabel || '一份', unit: 'g', grams: +servingG || 100 },
+          { label: '100克', unit: 'g', grams: 100 },
+        ],
+        source: '自行輸入', isEstimate: true, isCustom: true, createdAt: Date.now(),
+      }
+      await onSave(food)
+    } catch {
+      setErr('儲存失敗，請再試一次')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="p-5 space-y-4" style={{ maxHeight: '70dvh', overflowY: 'auto' }}>
+      <button className="text-sm text-[#4caf7d] flex items-center gap-1 touch-manipulation" onClick={onBack}>← 返回搜尋</button>
+      <h3 className="font-semibold text-[#2d2d2d]">新增自訂食物</h3>
+      <p className="text-xs text-[#8a8a8a]">填入每 100g 的營養資訊</p>
+
+      {err && <div className="text-xs text-red-500 bg-red-50 rounded-xl p-2">{err}</div>}
+
+      <div>
+        <label className="text-xs text-[#8a8a8a] block mb-1">食物名稱 *</label>
+        <input className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+          placeholder="例：自家料理、某品牌產品"
+          value={name} onChange={e => setName(e.target.value)} />
+      </div>
+
+      <div>
+        <label className="text-xs text-[#8a8a8a] block mb-1">分類</label>
+        <div className="flex flex-wrap gap-2">
+          {allCategories.map(c => (
+            <button key={c}
+              className={`px-3 py-1.5 rounded-xl text-xs border touch-manipulation ${category === c ? 'bg-[#4caf7d] text-white border-[#4caf7d]' : 'bg-white border-[#e8e0d4] text-[#8a8a8a]'}`}
+              onClick={() => setCategory(c)}
+            >{c}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">熱量 kcal/100g *</label>
+          <input type="number" inputMode="decimal" className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="0" value={calories} onChange={e => setCalories(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">蛋白質 g/100g</label>
+          <input type="number" inputMode="decimal" className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="0" value={protein} onChange={e => setProtein(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">碳水 g/100g</label>
+          <input type="number" inputMode="decimal" className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="0" value={carb} onChange={e => setCarb(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">脂肪 g/100g</label>
+          <input type="number" inputMode="decimal" className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="0" value={fat} onChange={e => setFat(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">一份名稱</label>
+          <input className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="一包、一瓶" value={servingLabel} onChange={e => setServingLabel(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-[#8a8a8a] block mb-1">一份克數 g</label>
+          <input type="number" inputMode="decimal" className="w-full border border-[#e8e0d4] rounded-2xl px-4 py-3 text-sm bg-white outline-none focus:border-[#4caf7d]"
+            placeholder="100" value={servingG} onChange={e => setServingG(e.target.value)} />
+        </div>
+      </div>
+
+      <Button fullWidth size="lg" onClick={handleSave} disabled={saving}>
+        {saving ? '儲存中…' : '新增並加入這餐'}
+      </Button>
     </div>
   )
 }
