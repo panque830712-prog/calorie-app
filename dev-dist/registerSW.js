@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/calorie-app/dev-sw.js?dev-sw', { scope: '/calorie-app/', type: 'classic' })
